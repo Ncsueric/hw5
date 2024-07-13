@@ -4,23 +4,191 @@ format: html
 editor: visual
 ---
 
-## Quarto
+### Task 1: Conceptual Questions
 
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+ 1. What is the purpose of using cross-validation when fitting a random forest model?
 
-## Running Code
+Random forests have several hyperparameters, such as the number of trees, maximum depth, and number of features to consider at each split. Cross-validation is used to tune these hyperparameters by evaluating the model's performance for different combinations of hyperparameters and selecting the ones that result in the best performance.
+ 
+ 2. Describe the bagged tree algorithm.
+ 
+Bootstrap Sampling:
 
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+From the original training dataset，generate multiple bootstrap samples. Each bootstrap sample is created by randomly sampling from the original dataset with replacement. 
 
+Train Individual Trees:
+
+For each bootstrap sample, train a decision tree. Since each tree is trained on a different subset of the data, the individual trees will be different from each other.
+
+Aggregate Predictions:
+
+For regression problems, the predictions of the individual trees are averaged to produce the final prediction.
+For classification problems, the predictions of the individual trees are combined using majority voting to produce the final class prediction.
+ 
+ 
+ 3. What is meant by a general linear model?
+General Linear Model (GLM) including Continuous response and Allows for both continuous and categorical predictors
+ 
+ 4. When fitting a multiple linear regression model, what does adding an interaction term do? That is,
+ what does it allow the model to do differently as compared to when it is not included in the model?
+ 
+When an interaction term is included, the model accounts for the possibility that the effect of one predictor on the response variable changes depending on the value of another predictor. 
+ 
+ 5. Why do we split our data into a training and test set?
+
+Splitting data into a training and test set is to evaluate the performance of a model and ensure its ability to generalize to new, unseen data. 
+ 
+
+
+
+### Task 2: Fitting Models
 ```{r}
-1 + 1
+library(dplyr)
+library(caret)
+
+
+heart <- read.csv("heart.csv")
+
+heart <- heart |>
+  mutate(HeartDiseaseFactor = as.factor(HeartDisease))|>
+  select(-ST_Slope, -HeartDisease)
+
+dummy_vars <- dummyVars(~ Sex + ExerciseAngina + ChestPainType + RestingECG, data = heart)
+dummy_columns <- predict(dummy_vars, newdata = heart)
+
+
+heart <- cbind(heart, dummy_columns)
+
+heart <-heart|>
+  select(-Sex, -ExerciseAngina, -ChestPainType, -RestingECG)
+
+head(heart)
 ```
 
-You can add options to executable code like this
-
+#### Split your data into a training and test set. 
 ```{r}
-#| echo: false
-2 * 2
+set.seed(123)  # for reproducibility
+n <- nrow(heart)
+trainIndex <- sample(1:n, size = round(0.7 * n), replace = FALSE)
+trainData <- heart[trainIndex, ]
+testData <- heart[-trainIndex, ]
+
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+
+#### KNN
+```{r}
+
+ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3,
+                     preProcOptions = list(center = TRUE, scale = TRUE))
+
+
+kGrid <- expand.grid(k = 1:40)
+
+
+knn_model <- train(HeartDiseaseFactor ~ ., data = trainData,
+                   method = "knn",
+                   trControl = ctrl,
+                   tuneGrid = kGrid)
+
+print(knn_model$results)
+print(knn_model$bestTune)
+
+
+predictions <- predict(knn_model, newdata = testData)
+confusionMatrix(predictions, testData$HeartDiseaseFactor)
+```
+
+
+###　Logistic Regression
+```{r}
+model <- train(HeartDiseaseFactor ~ ., data = heart,
+                 method = "glm", family = "binomial")
+summary(model)
+
+
+ctrl <- trainControl(method = "repeatedcv", number = 10)
+
+
+model1 <- train(HeartDiseaseFactor ~ ., data = trainData,
+                 method = "glm", family = "binomial",
+                 trControl = ctrl)
+  
+print(model1)
+
+model2 <- train(HeartDiseaseFactor ~Cholesterol +FastingBS +Oldpeak+SexF+ExerciseAnginaN, data = trainData,
+                 method = "glm", family = "binomial",
+                 trControl = ctrl)
+  
+print(model2)
+
+model3 <- train(HeartDiseaseFactor ~Cholesterol +FastingBS +Oldpeak+SexF+ExerciseAnginaN+MaxHR+ChestPainTypeASY, data = trainData,
+                 method = "glm", family = "binomial",
+                 trControl = ctrl)
+  
+print(model3)
+
+predictions <- predict(model3, newdata = testData)
+confusionMatrix(predictions, testData$HeartDiseaseFactor)
+```
+
+###　Tree Models
+#### classification tree model
+
+```{r}
+
+train_control <- trainControl(method = "cv", number = 10)
+
+
+cp_grid <- expand.grid(cp = seq(0, 0.1, by = 0.001))
+
+model <- train(HeartDiseaseFactor ~Cholesterol +FastingBS +Oldpeak+SexF+ExerciseAnginaN+MaxHR+ChestPainTypeASY, data = trainData, method = "rpart", 
+               trControl = train_control, tuneGrid = cp_grid)
+
+predictions <- predict(model, newdata = testData)
+confusionMatrix(predictions, testData$HeartDiseaseFactor)
+
+
+
+```
+
+#### random forest
+
+```{r}
+
+train_control <- trainControl(method = "cv", number = 10)
+
+
+mtry_grid <- expand.grid(mtry = 1:7)
+
+
+model <- train(HeartDiseaseFactor ~Cholesterol +FastingBS +Oldpeak+SexF+ExerciseAnginaN+MaxHR+ChestPainTypeASY, data = trainData, method = "rf", 
+               trControl = train_control, tuneGrid = mtry_grid )
+
+predictions <- predict(model, newdata = testData)
+confusionMatrix(predictions, testData$HeartDiseaseFactor)
+```
+
+####　boosted tree
+```{r}
+train_control <- trainControl(method = "cv", number = 10)
+
+tuning_grid <- expand.grid(
+  n.trees = c(25, 50, 100, 200),
+  interaction.depth = c(1, 2, 3),
+  shrinkage = 0.1,
+  n.minobsinnode = 10
+)
+
+model <- train(HeartDiseaseFactor ~Cholesterol +FastingBS +Oldpeak+SexF+ExerciseAnginaN+MaxHR+ChestPainTypeASY, data = trainData, method = "gbm",
+               trControl = train_control, tuneGrid = tuning_grid,
+               verbose = FALSE)
+
+predictions <- predict(model, newdata = testData)
+confusionMatrix(predictions, testData$HeartDiseaseFactor)
+
+```
+
+### Wrap up
+
+random forest is the best model with  Accuracy rate: 0.8255  
